@@ -8,10 +8,29 @@ check_error() {
     fi
 }
 
+# Pergunta sim/não com padrão "não".
+# A resposta pode vir da variável de ambiente informada (ex.: INSTALL_CODEX=1),
+# o que permite rodar o script sem interação.
+# Uso: ask_optional "Pergunta?" INSTALL_CODEX
+ask_optional() {
+    local prompt="$1"
+    local env_name="$2"
+    local answer
+
+    answer="${!env_name:-}"
+    if [ -z "$answer" ]; then
+        read -r -p "$prompt [s/N] " answer
+    fi
+
+    case "${answer,,}" in
+        s|sim|y|yes|1|true) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 echo -e "\e[34mIniciando a instalação do sistema, DEV!\e[0m"
 echo "Este script instalará as seguintes ferramentas:"
 echo "- Google Chrome"
-echo "- JetBrains Toolbox (para IntelliJ IDEA)"
 echo "- Apache NetBeans"
 echo "- MySQL Workbench"
 echo "- gedit"
@@ -22,6 +41,11 @@ echo "- Node"
 echo "- PHP 7.3"
 echo "- PHP 8.1"
 echo "- Composer"
+echo ""
+echo "Opcionais (o script pergunta antes de instalar):"
+echo "- Codex CLI"
+echo "- OpenCode"
+echo "- T3 Code (para usar o provider Antigravity)"
 read -p "Pressione Enter para continuar ou Ctrl+C para cancelar..."
 
 # Atualizar pacotes
@@ -178,13 +202,70 @@ else
     echo "Node.js já está instalado."
 fi
 
----
+# Instalar ferramentas de IA (opcionais)
+echo ""
+echo "Ferramentas de IA: todas são opcionais, pressione Enter para pular."
 
-## Installing PHP 7.3 and PHP 8.1
+# Codex CLI (OpenAI)
+if ask_optional "Instalar Codex CLI (npm install -g @openai/codex)?" INSTALL_CODEX; then
+    if command -v codex &> /dev/null; then
+        echo "Codex CLI já está instalado."
+    elif ! command -v npm &> /dev/null; then
+        echo "Aviso: npm não encontrado, então o Codex CLI foi pulado."
+    else
+        echo "Instalando Codex CLI..."
+        # Usa sudo apenas quando o diretório global do npm não é gravável
+        # (evita instalar como root em instalações via nvm).
+        if [ -w "$(npm root -g)" ]; then
+            npm install -g @openai/codex
+        else
+            sudo npm install -g @openai/codex
+        fi
+        check_error "Falha ao instalar o Codex CLI"
+    fi
+else
+    echo "Codex CLI pulado."
+fi
 
-To install multiple PHP versions, we first need to add the `ondrej/php` PPA, which provides various PHP versions.
+# OpenCode
+if ask_optional "Instalar OpenCode?" INSTALL_OPENCODE; then
+    if command -v opencode &> /dev/null; then
+        echo "OpenCode já está instalado."
+    else
+        echo "Instalando OpenCode..."
+        OPENCODE_INSTALLER=$(mktemp)
+        curl -fsSL https://opencode.ai/install -o "$OPENCODE_INSTALLER"
+        check_error "Falha ao baixar o instalador do OpenCode"
+        bash "$OPENCODE_INSTALLER"
+        check_error "Falha ao instalar o OpenCode"
+        rm -f "$OPENCODE_INSTALLER"
+    fi
+else
+    echo "OpenCode pulado."
+fi
 
-```bash
+# Antigravity (via T3 Code)
+# O Antigravity não tem CLI própria: o T3 Code baixa e gerencia o pacote
+# (agy_acp_server) quando o provider é ativado no app.
+if ask_optional "Instalar T3 Code (necessário para o provider Antigravity)?" INSTALL_ANTIGRAVITY; then
+    if command -v t3 &> /dev/null; then
+        echo "T3 Code já está instalado."
+    else
+        echo "Instalando T3 Code..."
+        T3_INSTALLER=$(mktemp)
+        curl -fsSL https://t3.codes/install.sh -o "$T3_INSTALLER"
+        check_error "Falha ao baixar o instalador do T3 Code"
+        sh "$T3_INSTALLER"
+        check_error "Falha ao instalar o T3 Code"
+        rm -f "$T3_INSTALLER"
+    fi
+    echo "Para usar o Antigravity: abra o T3 Code, acesse Configurações > Providers"
+    echo "e ative o provider Antigravity. O T3 baixa o pacote gerenciado e conclui"
+    echo "o login da conta Google no primeiro uso."
+else
+    echo "T3 Code / Antigravity pulado."
+fi
+
 # Adicionar PPA para PHP
 echo "Adicionando PPA para PHP..."
 sudo add-apt-repository -y ppa:ondrej/php
@@ -210,13 +291,6 @@ else
     echo "PHP 8.1 já está instalado."
 fi
 
----
-
-## Installing Composer
-
-Composer is a dependency manager for PHP. We'll install it globally.
-
-```bash
 # Instalar Composer
 echo "Instalando Composer..."
 if ! command -v composer &> /dev/null; then
