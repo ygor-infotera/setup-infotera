@@ -46,6 +46,7 @@ echo "Opcionais (o script pergunta antes de instalar):"
 echo "- Codex CLI"
 echo "- OpenCode"
 echo "- T3 Code (para usar o provider Antigravity)"
+echo "- Modo sempre ativo/performance (opcional)"
 read -p "Pressione Enter para continuar ou Ctrl+C para cancelar..."
 
 # Atualizar pacotes
@@ -330,6 +331,74 @@ if [ -f "./settings.xml" ]; then
     echo "Arquivo 'settings.xml' movido para '~/.m2/settings.xml'."
 else
     echo "Arquivo './settings.xml' não encontrado. Pulando a movimentação."
+fi
+
+# Modo sempre ativo (opcional)
+if ask_optional "Configurar modo sempre ativo (sem suspender e em performance máxima)?" SETUP_ALWAYS_ON; then
+    echo "Configurando modo sempre ativo..."
+
+    # Ignora tampa e inatividade no systemd-logind
+    sudo install -d -m 755 /etc/systemd/logind.conf.d
+    sudo tee /etc/systemd/logind.conf.d/99-sempre-ativo.conf > /dev/null <<'EOF'
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+HandleSuspendKey=ignore
+HandleHibernateKey=ignore
+IdleAction=ignore
+EOF
+    check_error "Falha ao configurar o systemd-logind"
+
+    # Bloqueia suspensão e hibernação
+    sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+    check_error "Falha ao bloquear suspensão/hibernação"
+
+    # Script que reaplica performance máxima (governor, EPP e perfil da plataforma)
+    sudo tee /usr/local/sbin/t3-performance.sh > /dev/null <<'EOF'
+#!/bin/bash
+# Coloca a máquina em modo de performance.
+set -u
+
+for f in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+    echo performance > "$f" 2>/dev/null || true
+done
+
+for f in /sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference; do
+    echo performance > "$f" 2>/dev/null || true
+done
+
+if [ -w /sys/firmware/acpi/platform_profile ]; then
+    echo performance > /sys/firmware/acpi/platform_profile 2>/dev/null || true
+fi
+
+powerprofilesctl set performance > /dev/null 2>&1 || true
+exit 0
+EOF
+    sudo chmod 755 /usr/local/sbin/t3-performance.sh
+
+    sudo tee /etc/systemd/system/t3-performance.service > /dev/null <<'EOF'
+[Unit]
+Description=Modo de performance (setup-infotera)
+After=power-profiles-daemon.service multi-user.target
+Wants=power-profiles-daemon.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/t3-performance.sh
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now t3-performance.service
+    check_error "Falha ao ativar o modo de performance"
+
+    echo "Modo sempre ativo configurado: tampa ignorada, suspensão bloqueada e performance máxima."
+    echo "Para reverter, veja a seção 'Modo sempre ativo' no README."
+else
+    echo "Modo sempre ativo pulado."
 fi
 
 # Limpar pacotes desnecessários
